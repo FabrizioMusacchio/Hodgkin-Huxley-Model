@@ -3,7 +3,6 @@ A script to simulate the action potential of a neuron using the Hodgkin-Huxley m
 
 author: Fabrizio Musacchio
 date: Apr 11, 2024
-
 """
 # %% IMPORTS
 import numpy as np
@@ -12,6 +11,8 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 import matplotlib.lines as mlines
 import os
+from scipy.signal import argrelextrema
+from scipy.optimize import curve_fit
 # set global font size for plots:
 plt.rcParams.update({'font.size': 12})
 # create a figure folder if it doesn't exist:
@@ -29,10 +30,8 @@ def I_ext(t, I_amp=1.0, intervals=[[5, 6], [10, 17]]):
 # Hodgkin-Huxley model differential equations:
 def hodgkin_huxley(t, y, I_amp, intervals):
     V_m, m, h, n = y
-    # Use the modified I_ext function
     I_ext_current = I_ext(t, I_amp, intervals)
     dVmdt = (I_ext_current - g_Na * m**3 * h * (V_m - U_Na) - g_K * n**4 * (V_m - U_K) - g_L * (V_m - U_L)) / C_m
-    # Continue with the rest of the model as before
     alpha_m = 0.1 * (25 - V_m) / (np.exp((25 - V_m) / 10) - 1)
     beta_m = 4.0 * np.exp(-V_m / 18)
     alpha_h = 0.07 * np.exp(-V_m / 20)
@@ -125,11 +124,21 @@ n0 = n_inf[index_zero] #0.12 # 0.32
 y0 = [U_rest, m0, h0, n0]
 
 # parameters for I_ext:
-I_amp = 45   # amplitude of external current in uA/cm^2; from nA/cm^2 to uA/cm^2: 0.1, thus I_amp=100 mean 10 nA/cm^2
-intervals = [[5, 7]]
-
+I_amp = 50   # amplitude of external current in uA/cm^2; from nA/cm^2 to uA/cm^2: 0.1, thus I_amp=100 mean 10 nA/cm^2
+intervals = [[5, 7]] #[7.5, 9.5] [5, 7], [20, 22]
+""" # create an interval staring a t_start for an adjustable duration and an adjustable time between intervals:
+t_start = 5 # ms
+t_stop = 150
+t_duration = 15 # ms  #   4  4  2  15
+t_off_time = 10 # ms  # 15 10 10  10
+intervals = []
+t = t_start
+while t < t_stop:
+    intervals.append([t, t + t_duration])
+    t += t_duration + t_off_time """
+    
 # time range:
-t = np.linspace(0, 50, 5000)  # 50 milliseconds, 5000 points
+t = np.linspace(0, 200, 5000)  # 50 milliseconds, 5000 points
 
 # solve ODE:
 sol = solve_ivp(hodgkin_huxley, [t.min(), t.max()], y0, t_eval=t, args=(I_amp, intervals))
@@ -141,9 +150,13 @@ plt.figure(figsize=(7, 11))
 plt.subplot(4, 1, 1)
 plt.plot(sol.t, sol.y[0], 'k', label='$U_m/t)$', lw=1.75)
 plt.ylabel('membrane potential\n$U_m$ (mV)')
+# if intervals is too long, cut it and add "...":
+intervals_str = str(intervals)
+if len(intervals_str) > 50:
+    intervals_str = intervals_str[:50] + "..."
 plt.title(f"Membrane potential, gating variables, external current and\nphase plane plots for " +
           f"$C_m$: {C_m}, $g_{{Na}}$: {g_Na}, $g_K$: {g_K}, $g_L$: {g_L},\n$U_{{eq,Na}}$: {U_Na}, $U_{{eq,K}}$: {U_K}, $U_{{eq,L}}$: {U_L}, " +
-          f"$I_{{ext}}$: {I_amp},\nand t: {intervals}")
+          f"$I_{{ext}}$: {I_amp},\nand t: {intervals_str}")
 plt.axhline(y=U_rest, color='gray', linestyle='--', label='$U_{rest}$')
 plt.legend(loc='upper right')
 plt.ylim(-100, 125)
@@ -211,6 +224,11 @@ plt.tight_layout()
 time_ranges_str = '_'.join([f'{time_range[0]}_{time_range[1]}' for time_range in intervals])
 plt.savefig(f'figures/hodgkin_huxley_model_Cm_{C_m}_gNa_{g_Na}_gK_{g_K}_gL_{g_L}_UNa_{U_Na}_UK_{U_K}_UL_{U_L}_Iext_{I_amp}_t_{time_ranges_str}.png', dpi=300)
 plt.show()
+
+# count the voltage spikes:
+idx_spikes = argrelextrema(sol.y[0], np.greater)[0]
+idx_spikes = [idx for idx in idx_spikes if sol.y[0][idx] > 0]
+print(f"Number of current pulse:  {len(intervals)}.\nNumber of voltage spikes: {len(idx_spikes)}")
 # %% PLOT AP FOR DIFFERENT CURRENTS
 # define the a set of external currents:
 I_amps = [0, 1, 3, 5, 10, 15, 18, 19]
@@ -354,23 +372,24 @@ plt.gca().spines['left'].set_visible(False)
 
 # plotting external current:
 plt.subplot(4, 1, 3)
-plt.plot(sol.t, [I_ext(time, I_amp, intervals) for time in sol.t], label='$I_{ext}(t)$', lw=1.75)
+I_ext_array = [I_ext(time, I_amp, intervals) for time in sol.t]
+plt.plot(sol.t, I_ext_array, label='$I_{ext}(t)$', lw=1.75)
 plt.ylabel('external current\n$I_{ext}$ ($\\mu A/cm^2$)')
 plt.legend(loc='upper right')
 plt.xlabel('time (ms)')
 
-plt.fill_between(sol.t[0:idx_ap_onset], -1, 20, color='gray', alpha=0.1)
-plt.fill_between(sol.t[idx_ap_onset:idx_max], -1, 20, color='g', alpha=0.1)
-plt.fill_between(sol.t[idx_max:idx_zerocross_next], -1, 20, color='orange', alpha=0.1)
-plt.fill_between(sol.t[idx_zerocross_next:idx_urest_next], -1, 20, color='purple', alpha=0.1)
-plt.fill_between(sol.t[idx_urest_next:], -1, 20, color='gray', alpha=0.1)
+plt.fill_between(sol.t[0:idx_ap_onset], -1, max(I_ext_array)+3, color='gray', alpha=0.1)
+plt.fill_between(sol.t[idx_ap_onset:idx_max], -1, max(I_ext_array)+3, color='g', alpha=0.1)
+plt.fill_between(sol.t[idx_max:idx_zerocross_next], -1, max(I_ext_array)+3, color='orange', alpha=0.1)
+plt.fill_between(sol.t[idx_zerocross_next:idx_urest_next], -1, max(I_ext_array)+3, color='purple', alpha=0.1)
+plt.fill_between(sol.t[idx_urest_next:], -1, max(I_ext_array)+3, color='gray', alpha=0.1)
 plt.axvline(x=sol.t[idx_ap_onset], color='gray', linestyle='-', lw=0.75)
 plt.axvline(x=sol.t[idx_max], color='gray', linestyle='-', lw=0.75)
 plt.axvline(x=sol.t[idx_zerocross_next], color='gray', linestyle='-', lw=0.75)
 plt.axvline(x=sol.t[idx_urest_next], color='gray', linestyle='-', lw=0.75)
 
 plt.xlim(0, 40)
-plt.ylim(-1, 20)
+plt.ylim(-1, max(I_ext_array)+3)
 plt.grid(True)
 plt.gca().spines['top'].set_visible(False)
 plt.gca().spines['right'].set_visible(False)
@@ -405,12 +424,186 @@ plt.ylim(-0.1, 1.1)
 #plt.ylabel('gating variable $h$')
 plt.legend(loc='upper right')
 
+plt.tight_layout()
+#plt.savefig('figures/hodgkin_huxley_model_membrane_potential_gating_variables.png', dpi=300)
+time_ranges_str = '_'.join([f'{time_range[0]}_{time_range[1]}' for time_range in intervals])
+plt.savefig(f'figures/hodgkin_huxley_model_APphase_Cm_{C_m}_gNa_{g_Na}_gK_{g_K}_gL_{g_L}_UNa_{U_Na}_UK_{U_K}_UL_{U_L}_Iext_{I_amp}_t_{time_ranges_str}.png', dpi=300)
+
+plt.show() 
+# %% CALCULATE THE FREQUENCY OF THE ACTION POTENTIAL DURING A CONSTANT CURRENT PULSE
+# run the simulation for a constant current pulse, that increases linearly from 0 to I_amp_end uA/cm^2:
+I_amp_end = 200
+intervals = [[5, 495]]
+# time range:
+t = np.linspace(0, 500, 5000)  # 50 milliseconds, 5000 points
+
+# simulate the model for different external currents:
+I_amps =[]
+spike_counts = []
+for I_amp in range(0, I_amp_end, 10):
+    sol = solve_ivp(hodgkin_huxley, [t.min(), t.max()], y0, t_eval=t, args=(I_amp, intervals))
+    idx_spikes = argrelextrema(sol.y[0], np.greater)[0]
+    idx_spikes = [idx for idx in idx_spikes if sol.y[0][idx] > 0]
+    I_amps.append(I_amp)
+    spike_counts.append(len(idx_spikes))
+    
+# from I_amp=30 on, we fit a sigmoid function to the data:
+def sigmoid(x, L, k, x0):
+    return L / (1 + np.exp(-k * (x - x0)))
+popt, pcov = curve_fit(sigmoid, I_amps[3:], spike_counts[3:], bounds=(0, [100., 0.1, 200]))
+# print the parameters:
+L, k, x0 = popt
+print(f"Estimated L: {L}, k: {k}, x0: {x0}")
+
+# generate enough x values to create a smooth plot:
+x_values = np.linspace(0, 190, 400)
+fitted_values = sigmoid(x_values, *popt)
+    
+# plot the frequency of the action potential as a function of the external current:
+plt.figure(figsize=(5, 4))
+plt.plot(I_amps, spike_counts, 'ko', lw=1.75, label='data points')
+plt.plot(x_values, fitted_values, label='fitted sigmoid curve', color='red', lw=1.75)
+plt.title(f"Firing rate vs. external current")
+plt.xlabel('external current $I_{ext}$ ($\\mu A/cm^2$)')
+plt.ylabel('number of spikes')
+plt.grid(True)
+plt.gca().spines['top'].set_visible(False)
+plt.gca().spines['right'].set_visible(False)
+plt.gca().spines['bottom'].set_visible(False)
+plt.gca().spines['left'].set_visible(False)
+plt.legend()
+plt.tight_layout()
+plt.savefig('figures/hodgkin_huxley_model_AP_frequency.png', dpi=300)
+plt.show()
+# %% SIMULATE MODEL: RAMPED CURRENT INJECTION
+# redefine the external current function in such a way that it ramps up linearly from 0 to I_amp 
+# between t_ramp_start and t_ramp_end, remains constant at I_amp until t_off, and then drops to 0:
+def I_ext_ramped(t, I_amp=10.0, t_ramp_start=5, t_ramp_end=10, t_off=20):
+    """
+    Calculates the external current I_ext at time t.
+    I_ext ramps up linearly from 0 to I_amp between t_ramp_start and t_ramp_end,
+    remains constant at I_amp until t_off, and then drops to 0.
+    """
+    if t < t_ramp_start or t > t_off:
+        return 0
+    elif t_ramp_start <= t <= t_ramp_end:
+        return I_amp * (t - t_ramp_start) / (t_ramp_end - t_ramp_start)
+    else:  # t_ramp_end < t <= t_off
+        return I_amp
+
+# redefine the Hodgkin-Huxley model to include the ramped external current:
+def hodgkin_huxley_ramped(t, y, I_amp, t_ramp_start, t_ramp_end, t_off):
+    V_m, m, h, n = y
+    # continue with the rest of the model as before:
+    I_ext_current = I_ext_ramped(t, I_amp, t_ramp_start, t_ramp_end, t_off)
+    dVmdt = (I_ext_current - g_Na * m**3 * h * (V_m - U_Na) - g_K * n**4 * (V_m - U_K) - g_L * (V_m - U_L)) / C_m
+    # continue with the rest of the model as before:
+    alpha_m = 0.1 * (25 - V_m) / (np.exp((25 - V_m) / 10) - 1)
+    beta_m = 4.0 * np.exp(-V_m / 18)
+    alpha_h = 0.07 * np.exp(-V_m / 20)
+    beta_h = 1 / (np.exp((30 - V_m) / 10) + 1)
+    alpha_n = 0.01 * (10 - V_m) / (np.exp((10 - V_m) / 10) - 1)
+    beta_n = 0.125 * np.exp(-V_m / 80)
+    dmdt = alpha_m * (1 - m) - beta_m * m
+    dhdt = alpha_h * (1 - h) - beta_h * h
+    dndt = alpha_n * (1 - n) - beta_n * n
+    return [dVmdt, dmdt, dhdt, dndt]
+
+# parameters for I_ext (ramped):
+I_amp = 19 # amplitude of external current in uA/cm^2
+t_ramp_start=5 # time when the current starts to ramp up, in ms
+t_ramp_end=40 # time when the current reaches its maximum, in ms
+t_off=100    # time when the current drops to 0, in ms
+
+# time range:
+t = np.linspace(0, 200, 5000)  # 50 milliseconds, 5000 points
+
+# solve ODE:
+sol = solve_ivp(hodgkin_huxley_ramped, [t.min(), t.max()], y0, t_eval=t, args=(I_amp, t_ramp_start, t_ramp_end, t_off))
+
+# plot results:
+plt.figure(figsize=(7, 11))
+
+# plotting membrane potential:
+plt.subplot(4, 1, 1)
+plt.plot(sol.t, sol.y[0], 'k', label='$U_m/t)$', lw=1.75)
+plt.ylabel('membrane potential\n$U_m$ (mV)')
+# if intervals is too long, cut it and add "...":
+intervals_str = str(intervals)
+if len(intervals_str) > 50:
+    intervals_str = intervals_str[:50] + "..."
+plt.title(f"Membrane potential, gating variables, external current and\nphase plane plots for " +
+          f"$C_m$: {C_m}, $g_{{Na}}$: {g_Na}, $g_K$: {g_K}, $g_L$: {g_L},\n$U_{{eq,Na}}$: {U_Na}, $U_{{eq,K}}$: {U_K}, $U_{{eq,L}}$: {U_L}, " +
+          f"$I_{{ext}}$: {I_amp},\nt$_{{ramp_start}}$: {t_ramp_start}, t$_{{ramp_end}}$: {t_ramp_end}, t$_{{off}}$: {t_off}")
+plt.axhline(y=U_rest, color='gray', linestyle='--', label='$U_{rest}$')
+plt.legend(loc='upper right')
+plt.ylim(-100, 125)
+plt.grid(True)
+plt.gca().spines['top'].set_visible(False)
+plt.gca().spines['right'].set_visible(False)
+plt.gca().spines['bottom'].set_visible(False)
+plt.gca().spines['left'].set_visible(False)
+
+# plotting gating variables:
+plt.subplot(4, 1, 2) 
+plt.plot(sol.t, sol.y[1], 'r', label='$m$', lw=1.75)
+plt.plot(sol.t, sol.y[2], 'g', label='$h$', lw=1.75)
+plt.plot(sol.t, sol.y[3], 'b', label='$n$', lw=1.75)
+plt.ylabel('gating variables')
+plt.legend(loc='upper right')
+plt.xlabel('time (ms)')
+plt.grid(True)
+plt.gca().spines['top'].set_visible(False)
+plt.gca().spines['right'].set_visible(False)
+plt.gca().spines['bottom'].set_visible(False)
+plt.gca().spines['left'].set_visible(False)
+
+# plotting external current:
+plt.subplot(4, 1, 3)
+plt.plot(sol.t, [I_ext_ramped(time, I_amp, t_ramp_start, t_ramp_end, t_off) for time in sol.t], label='$I_{ext}(t)$', lw=1.75)
+plt.ylabel('external current\n$I_{ext}$ ($\\mu A/cm^2$)')
+plt.legend(loc='upper right')
+plt.xlabel('time (ms)')
+plt.grid(True)
+plt.gca().spines['top'].set_visible(False)
+plt.gca().spines['right'].set_visible(False)
+plt.gca().spines['bottom'].set_visible(False)
+plt.gca().spines['left'].set_visible(False)
+
+# plot U_m and m in phase space:
+plt.subplot(4, 3, 10)
+plt.plot(sol.y[0], sol.y[1], 'r', lw=1.75, label='trajectory')
+plt.plot(sol.y[0][0], sol.y[1][0], 'bo', label='start point', alpha=0.75, markersize=7)
+plt.plot(sol.y[0][-1], sol.y[1][-1], 'o', c="yellow", label='end point', alpha=0.75, markersize=7)
+plt.xlabel('$U_m$ (mV)')
+plt.ylabel('$m$/$h$/$n$')
+plt.ylim(-0.1, 1.1)
+
+# plot U_m and h in phase space:
+plt.subplot(4, 3, 11)
+plt.plot(sol.y[0], sol.y[2], 'g', lw=1.75, label='trajectory')
+plt.plot(sol.y[0][0], sol.y[2][0], 'bo', label='start point', alpha=0.75, markersize=7)
+plt.plot(sol.y[0][-1], sol.y[2][-1], 'o', c="yellow", label='end point', alpha=0.75, markersize=7)
+plt.xlabel('$U_m$ (mV)')
+plt.ylim(-0.1, 1.1)
+#plt.ylabel('gating variable $m$')
+
+# plot U_m and n in phase space:
+plt.subplot(4, 3, 12)
+plt.plot(sol.y[0], sol.y[3], 'b', lw=1.75)#label='trajectory'
+plt.plot(sol.y[0][0], sol.y[3][0], 'bo', label='start', alpha=0.75, markersize=7)
+plt.plot(sol.y[0][-1], sol.y[3][-1], 'o', c="yellow", label='end', alpha=0.75, markersize=7)
+plt.xlabel('$U_m$ (mV)')
+plt.ylim(-0.1, 1.1)
+#plt.ylabel('gating variable $h$')
+plt.legend(loc='upper right')
 
 plt.tight_layout()
-plt.savefig('figures/hodgkin_huxley_model_membrane_potential_gating_variables.png', dpi=300)
-plt.show() 
-# %%
+plt.savefig(f'figures/hodgkin_huxley_model_ramped_Cm_{C_m}_gNa_{g_Na}_gK_{g_K}_gL_{g_L}_UNa_{U_Na}_UK_{U_K}_UL_{U_L}_Iext_{I_amp}_t_{t_ramp_start}_{t_ramp_end}_{t_off}.png', dpi=300)
+plt.show()
 
-
-
+# count the voltage spikes:
+idx_spikes = argrelextrema(sol.y[0], np.greater)[0]
+idx_spikes = [idx for idx in idx_spikes if sol.y[0][idx] > 0]
+print(f"Number of current pulse:  {len(intervals)}.\nNumber of voltage spikes: {len(idx_spikes)}")
 # %% END
